@@ -1,0 +1,173 @@
+#Завдання 1
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
+# 1. ЗАВАНТАЖЕННЯ ДАНИХ
+file_path = r'C:\Users\LOQ\Downloads\Telegram Desktop\A14.txt'
+try:
+    # Завантаження без заголовка
+    df = pd.read_csv(file_path, header=None)
+    print(f"Дані завантажено. Розмірність: {df.shape}")
+except FileNotFoundError:
+    # Тестові дані, якщо файл не знайдено
+    print("Файл не знайдено, генеруємо тестові дані...")
+    t = np.linspace(0, 10, 5000)
+    df = pd.DataFrame(np.sin(t[:, None] + np.random.randn(1, 12)))
+
+# Параметри з умови
+N = df.shape[0]
+time = np.linspace(0, 10, N)
+
+# 2. ПОПЕРЕДНЯ ОБРОБКА (Стандартизація)
+# Для PCA важливо, щоб дані мали середнє=0 і дисперсію=1
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(df)
+
+# 3. ФАКТОРНИЙ АНАЛІЗ (PCA)
+# Знаходимо всі компоненти (12 штук)
+pca = PCA(n_components=12)
+X_pca = pca.fit_transform(X_scaled)
+
+# Власні числа (Eigenvalues) - пояснена дисперсія
+eigenvalues = pca.explained_variance_
+explained_variance_ratio = pca.explained_variance_ratio_ * 100
+cumulative_variance = np.cumsum(explained_variance_ratio)
+
+print("\n--- Результати Факторного Аналізу ---")
+print(f"{'№':<5} {'Власне число':<15} {'% Дисперсії':<15} {'Сумарна %':<15}")
+for i in range(12):
+    print(f"{i+1:<5} {eigenvalues[i]:<15.4f} {explained_variance_ratio[i]:<15.2f} {cumulative_variance[i]:<15.2f}")
+
+# Критерій інформативності для перших 3-х компонент (як у прикладі методички)
+info_criterion = sum(eigenvalues[:3]) / sum(eigenvalues)
+print(f"\nКритерій інформативності (k=3): {info_criterion:.4f} (пояснює {cumulative_variance[2]:.2f}% дисперсії)")
+
+# Графік "Кам'янистий осип" (Scree Plot) [Рис. 7 методички]
+plt.figure(figsize=(10, 5))
+plt.plot(range(1, 13), eigenvalues, 'bo-', linewidth=2)
+plt.title("Графік кам'янистого осипу (Scree Plot)")
+plt.xlabel("Номер компоненти")
+plt.ylabel("Власне число")
+plt.grid(True)
+plt.show()
+
+# Графік першої головної компоненти (Z1) [Рис. 10 методички]
+plt.figure(figsize=(12, 4))
+plt.plot(time, X_pca[:, 0], color='purple')
+plt.title("Перша головна компонента (Z1)")
+plt.xlabel("Час (сек)")
+plt.grid(True)
+plt.show()
+
+# 4. КЛАСТЕРНИЙ АНАЛІЗ (K-Means)
+# Варіант А: Кластеризація вихідних даних (12D)
+# Варіант Б: Кластеризація головних факторів (3D - Z1, Z2, Z3)
+# Виконаємо для 3D, як найбільш наочний варіант, з k=7 (як на Рис. 12)
+
+k_clusters = 7
+kmeans = KMeans(n_clusters=k_clusters, random_state=42, n_init=10)
+# Беремо перші 3 компоненти
+X_3d = X_pca[:, :3] 
+clusters = kmeans.fit_predict(X_3d)
+
+# Додаємо мітки кластерів до даних
+df_res = pd.DataFrame(X_3d, columns=['Z1', 'Z2', 'Z3'])
+df_res['Cluster'] = clusters
+
+# Візуалізація Кластерів (Проекція на Z1-Z2)
+plt.figure(figsize=(10, 8))
+sns.scatterplot(data=df_res, x='Z1', y='Z2', hue='Cluster', palette='viridis', s=50, alpha=0.6)
+plt.scatter(kmeans.cluster_centers_[:, 0], kmeans.cluster_centers_[:, 1], 
+            s=200, c='red', marker='X', label='Центри')
+plt.title(f"Результати кластеризації K-Means (k={k_clusters}) у просторі PCA")
+plt.xlabel("Головна компонента 1 (Z1)")
+plt.ylabel("Головна компонента 2 (Z2)")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Візуалізація R-піків на основі кластерів
+# Зазвичай один з кластерів відповідає за R-піки (максимальні відхилення)
+# Побудуємо графік Z1, розфарбований по кластерах
+plt.figure(figsize=(15, 5))
+plt.scatter(time, df_res['Z1'], c=df_res['Cluster'], cmap='viridis', s=10)
+plt.title("Сигнал Z1 з кольоровим кодуванням кластерів")
+plt.xlabel("Час")
+plt.ylabel("Амплітуда Z1")
+plt.colorbar(label='Номер кластера')
+plt.show()
+
+#Завдання 2
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+
+# 1. ГЕНЕРАЦІЯ ДАНИХ (Клімат Києва 1991-2020)
+
+np.random.seed(42)
+days = 365 * 10
+date_range = pd.date_range(start='2014-01-01', periods=days, freq='D')
+
+# Часова змінна t (дні)
+t = np.arange(days)
+
+# Параметри на основі ваших даних
+avg_temp = 9.05       # Середнє зміщення
+amplitude = 12.25     # Розкид від -3.2 до +21.3
+
+# Формула:
+# Використовуємо -cos, щоб мінімум був у січні (початок року), а максимум влітку
+yearly_cycle = -amplitude * np.cos(2 * np.pi * t / 365) + avg_temp
+
+# Додаємо випадковий шум (погодні аномалії: дощ, вітер, хвилі холоду/тепла)
+# std=4 дає реалістичні відхилення (наприклад, +30 влітку або -15 взимку)
+noise = np.random.normal(0, 4, days) 
+
+# Невеликий тренд глобального потепління (наприклад, +0.5 градуса за 10 років)
+trend = t * (0.5 / days)
+
+temperature = yearly_cycle + noise + trend
+df = pd.DataFrame({'Date': date_range, 'Temp_Today': temperature})
+
+# 2. ПІДГОТОВКА ДАНИХ ТА МОДЕЛЬ
+
+df['Temp_Tomorrow'] = df['Temp_Today'].shift(-1)
+df = df.dropna()
+
+X = df[['Temp_Today']]
+y = df['Temp_Tomorrow']
+
+# Розбивка: 8 років навчання, 2 роки тест
+train_size = int(len(df) * 0.8)
+X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
+y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
+
+# Навчання лінійної регресії
+model = LinearRegression()
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+
+# 3. РЕЗУЛЬТАТИ ТА ВІЗУАЛІЗАЦІЯ
+
+print(f"Базові кліматичні норми: Січень -3.2°C, Липень +21.3°C")
+print(f"MSE (Середньоквадратична помилка): {mean_squared_error(y_test, y_pred):.2f}")
+print(f"R2 Score (Точність моделі): {r2_score(y_test, y_pred):.4f}")
+
+plt.figure(figsize=(12, 6))
+# Відобразимо останній рік для наочності
+plt.plot(df['Date'].iloc[-365:], y_test[-365:], label='Реальна температура (Simulated)', color='blue', alpha=0.6)
+plt.plot(df['Date'].iloc[-365:], y_pred[-365:], label='Прогноз моделі', color='red', linestyle='--', linewidth=1.5)
+plt.title('Прогноз погоди у Києві (на основі норм 1991-2020)')
+plt.ylabel('Температура (°C)')
+plt.xlabel('Дата')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
